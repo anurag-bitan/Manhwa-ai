@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.venv/
+venv/
+env/
+.env
+*.json
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# node_modules (frontend)
+frontend/node_modules/
+
+# build artifacts
+dist/
+build/
+*.log
+
+# system
+Thumbs.db
