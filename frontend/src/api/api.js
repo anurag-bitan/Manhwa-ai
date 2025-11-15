@@ -2,132 +2,85 @@
 // API CONFIG
 // ---------------------------------------------------------
 
-// Fallback to localhost if .env missing
 const API_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-// Simple helper for consistent error parsing
 async function parseJSONResponse(response) {
   try {
     return await response.json();
-  } catch (err) {
-    // Backend may return HTML on failure → avoid JSON parse crash
+  } catch {
     const text = await response.text();
-    throw new Error(
-      `Backend returned non-JSON response (${response.status}):\n${text}`
-    );
+    throw new Error(`Backend returned non-JSON (${response.status}):\n${text}`);
   }
 }
 
-// Optional retry wrapper (free, lightweight)
 async function fetchWithRetry(url, options, retries = 1) {
   try {
     return await fetch(url, options);
   } catch (err) {
-    if (retries > 0) {
-      console.warn("Retrying request due to network error...");
-      return fetchWithRetry(url, options, retries - 1);
-    }
+    if (retries > 0) return fetchWithRetry(url, options, retries - 1);
     throw err;
   }
 }
 
+// Normalize backend response (image_urls / panel_images)
+function normalizeStoryData(data) {
+  const imageList = data.image_urls || data.panel_images || [];
+  return {
+    ...data,
+    image_urls: Array.isArray(imageList) ? imageList : [],
+  };
+}
+
 // ---------------------------------------------------------
-// 1. Generate Audio Story (PDF → OCR → Script)
+// 1. Generate Audio Story
 // ---------------------------------------------------------
 
 export const generateAudioStory = async (formData) => {
-  const controller = new AbortController();
-
-  // Abort after 10 minutes (PDF + TTS)
-  const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
-
-  try {
-    const response = await fetchWithRetry(
-      `${API_URL}/api/v1/generate_audio_story`,
-      {
-        method: "POST",
-        body: formData,
-        signal: controller.signal,
-      }
-    );
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const errorData = await parseJSONResponse(response);
-      throw new Error(errorData.message || "Audio story failed.");
+  const response = await fetchWithRetry(
+    `${API_URL}/api/v1/generate_audio_story`,
+    {
+      method: "POST",
+      body: formData,
     }
+  );
 
-    return await parseJSONResponse(response);
-  } catch (err) {
-    clearTimeout(timeout);
-    throw err;
-  }
+  if (!response.ok) throw await parseJSONResponse(response);
+
+  const data = await parseJSONResponse(response);
+  return normalizeStoryData(data);
 };
 
 // ---------------------------------------------------------
-// 2. Generate Video (Fast 5s Preview + Background Render)
+// 2. Generate Video
 // ---------------------------------------------------------
 
-export const generateVideo = async (storyData, preview = false) => {
-  if (!storyData || typeof storyData !== "object") {
-    throw new Error("Invalid storyData passed to generateVideo().");
-  }
+export const generateVideo = async (storyData) => {
+  const response = await fetchWithRetry(`${API_URL}/api/v1/generate_video`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(storyData),
+  });
 
-  const controller = new AbortController();
+  if (!response.ok) throw await parseJSONResponse(response);
 
-  // Video generation is long → abort after 25 minutes
-  const timeout = setTimeout(() => controller.abort(), 25 * 60 * 1000);
-
-  // Preview mode → shorter timeout
-  if (preview) {
-    clearTimeout(timeout);
-    setTimeout(() => controller.abort(), 2 * 60 * 1000);
-  }
-
-  try {
-    const response = await fetchWithRetry(
-      `${API_URL}/api/v1/generate_video${preview ? "?preview=true" : ""}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(storyData),
-        signal: controller.signal,
-      }
-    );
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const errorData = await parseJSONResponse(response);
-      throw new Error(errorData.message || "Video generation failed.");
-    }
-
-    return await parseJSONResponse(response);
-  } catch (err) {
-    clearTimeout(timeout);
-    throw err;
-  }
+  return await parseJSONResponse(response);
 };
 
 // ---------------------------------------------------------
-// 3. NEW — Poll video status (Final video finished?)
+// 3. Correct Polling Endpoint
 // ---------------------------------------------------------
 
 export const getVideoStatus = async (jobId) => {
-  if (!jobId) throw new Error("Job ID missing for getVideoStatus().");
+  if (!jobId) throw new Error("Job ID missing");
 
   const response = await fetchWithRetry(
     `${API_URL}/api/v1/video_status/${jobId}`,
-    { method: "GET" }
+    {
+      method: "GET",
+    }
   );
 
-  if (!response.ok) {
-    const errorData = await parseJSONResponse(response);
-    throw new Error(errorData.message || "Failed to fetch video status.");
-  }
+  if (!response.ok) throw await parseJSONResponse(response);
 
   return await parseJSONResponse(response);
 };

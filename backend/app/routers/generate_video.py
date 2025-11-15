@@ -13,30 +13,69 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-# MoviePy imports
-from moviepy.editor import AudioFileClip, CompositeVideoClip, ImageClip, concatenate_videoclips
+# MoviePy imports (fixed order)
+from moviepy.editor import (
+    AudioFileClip,
+    CompositeVideoClip,
+    ImageClip,
+    concatenate_videoclips,
+    ColorClip
+)
 
-# Use your Supabase uploader helper (must be implemented in utils.supabase_utils)
+# Supabase uploader
 from app.utils.supabase_utils import supabase_upload
 
-# Cinematic clip generator (your file provided earlier)
+# Cinematic clip generator
 from app.utils.image_utils import generate_cinematic_clip
 
 router = APIRouter()
+
 VIDEO_FPS = 30
 VIDEO_RESOLUTION = (1080, 1920)
 
-# Local job-status directory (same pattern used elsewhere)
 STATUS_DIR = os.path.join(os.getcwd(), "job_status")
 os.makedirs(STATUS_DIR, exist_ok=True)
 
+# ---------------------------------------------------------------
+# VIDEO COMPRESSION (H.264 + CRF)
+# ---------------------------------------------------------------
+def compress_video(input_path: str, output_path: str, crf: int = 28) -> str:
+    """
+    Compress video using ffmpeg (lower file size for Supabase limit).
+    crf 23 = good quality
+    crf 28 = low size
+    crf 30+ = very small file
+    """
+    try:
+        import subprocess
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", input_path,
+            "-vcodec", "libx264",
+            "-crf", str(crf),
+            "-preset", "fast",
+            "-acodec", "aac",
+            output_path,
+        ]
+
+        print("🔧 Compressing video:", " ".join(cmd))
+        subprocess.run(cmd, check=True)
+
+        print("✔ Compression finished:", output_path)
+        return output_path
+
+    except Exception as e:
+        print("❌ Compression failed, using original:", e)
+        return input_path
 
 def write_status(job_id: str, data: dict):
-    """Write a small JSON file that frontend polls for job status."""
+    """Write job status JSON. Use default=str to avoid serialization errors."""
     try:
         path = os.path.join(STATUS_DIR, f"{job_id}.json")
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
     except Exception as e:
         print(f"[STATUS WRITE ERROR] job={job_id} error={e}")
 
@@ -48,15 +87,12 @@ class VideoGenerationRequest(BaseModel):
     final_video_segments: List[Dict[str, Any]]
 
 
-# -------------------------
-# Helper: download file sync
-# -------------------------
+# --------------------------
+# Download file (sync)
+# --------------------------
 def download_file_sync(url: str, local_path: str, retries: int = 2):
-    """
-    Download a file (images/audio) to local_path. Raises ValueError on failure.
-    Keep simple and robust: retries, timeouts.
-    """
     headers = {"User-Agent": "Manhwa-AI/1.0"}
+
     for attempt in range(retries + 1):
         try:
             with requests.get(url, stream=True, timeout=30, headers=headers) as r:
@@ -70,106 +106,102 @@ def download_file_sync(url: str, local_path: str, retries: int = 2):
             last_err = e
             print(f"[DOWNLOAD] Attempt {attempt+1}/{retries+1} failed for {url}: {e}")
             time.sleep(0.5)
+
     raise ValueError(f"Failed to download {url}: {last_err}")
 
 
-# -------------------------
-# Utility: upload local file via supabase_upload helper
-# -------------------------
-def upload_local_file_to_supabase(local_path: str, dest_path: str, content_type: str):
-    """
-    Reads local file as bytes and calls supabase_upload.
-    This function is synchronous; we call it inside run_in_threadpool when needed.
-    """
+# --------------------------
+# Upload via Supabase
+# --------------------------
+def upload_local_file_to_supabase(local_path: str, dest_path: str, ct: str):
     with open(local_path, "rb") as f:
         data = f.read()
-    # supabase_upload may be sync or async in your implementation.
-    # If it's async, the caller uses run_in_threadpool, so ensure the function runs fine.
-    return supabase_upload(data, dest_path, content_type)
+    return supabase_upload(data, dest_path, ct)
 
 
-# -------------------------
-# Full-resolution final render
-# -------------------------
-def render_video_sync(manga_name: str, audio_url: str, image_urls: List[str], segments: List[Dict[str, Any]], temp_dir: str) -> str:
-    """
-    Downloads audio & images, builds cinematic clips using your image_utils,
-    composites them and writes final MP4 into temp_dir.
-    Returns the local path of the final rendered video.
-    """
+# ================================================================
+# FIXED FULL VIDEO RENDER
+# ================================================================
+def render_video_sync(manga_name, audio_url, image_urls, segments, temp_dir):
+
     clips_to_close = []
+
     try:
         print("--- [RENDER] Downloading audio & images ---")
+
         audio_path = os.path.join(temp_dir, "narration.mp3")
         download_file_sync(audio_url, audio_path)
 
-        # download images (all pages referenced)
-        local_image_paths = {}
-        for i, u in enumerate(image_urls):
+        local_images = {}
+        for i, url in enumerate(image_urls):
             img_path = os.path.join(temp_dir, f"page_{i}.jpg")
-            download_file_sync(u, img_path)
-            local_image_paths[i] = img_path
+            download_file_sync(url, img_path)
+            local_images[i] = img_path
 
+        # Do NOT use "with AudioFileClip" to avoid closing audio reader too early
         audio_clip = AudioFileClip(audio_path)
+        if not getattr(audio_clip, "fps", None):
+            audio_clip = audio_clip.set_fps(44100)
         clips_to_close.append(audio_clip)
 
         print("--- [RENDER] Generating cinematic clips ---")
         video_clips = []
-        for seg_index, seg in enumerate(segments):
-            img_index = seg.get("image_page_index")
-            duration = seg.get("duration", 2.0)
-            start_time = seg.get("start_time", 0.0)
-            crop_coordinates = seg.get("crop_coordinates", [0, 0, 1000, 1000])
-            animation_type = seg.get("animation_type", "static_zoom")
 
-            if img_index not in local_image_paths:
-                print(f"   - [WARN] segment {seg_index} references missing image index {img_index} - skipping")
-                continue
-
-            image_path = local_image_paths[img_index]
-
-            # create cinematic clip using your utility (it returns a CompositeVideoClip)
+        for idx, seg in enumerate(segments):
             try:
+                img_index = seg.get("image_page_index")
+                dur = float(seg.get("duration", 2.0))
+                start = float(seg.get("start_time", 0.0))
+                coords = seg.get("crop_coordinates", [0, 0, 1000, 1000])
+                anim = seg.get("animation_type", "static_zoom")
+
+                if img_index not in local_images:
+                    print(f"[WARN] segment {idx} missing image")
+                    continue
+
                 clip = generate_cinematic_clip(
-                    image_path=image_path,
-                    coords_1000=crop_coordinates,
-                    clip_duration=duration,
-                    animation_type=animation_type
+                    image_path=local_images[img_index],
+                    coords_1000=coords,
+                    clip_duration=dur,
+                    animation_type=anim
                 )
-                clip = clip.set_start(start_time)
+
+                clip = clip.set_start(start)
                 video_clips.append(clip)
                 clips_to_close.append(clip)
+
             except Exception as e:
-                print(f"   - [ERROR] Failed to generate clip for segment {seg_index}: {e}")
-                continue
+                print(f"[ERROR] segment {idx}: {e}")
 
         if not video_clips:
-            raise ValueError("No valid video clips were generated.")
+            raise RuntimeError("No video clips were generated.")
 
-        print("--- [RENDER] Compositing final video ---")
+        print("--- [RENDER] Compositing final ---")
         final_video = CompositeVideoClip(video_clips, size=VIDEO_RESOLUTION)
-        final_video.set_audio(audio_clip)
+        final_video = final_video.set_audio(audio_clip)
         final_video.duration = audio_clip.duration
         clips_to_close.append(final_video)
 
-        output_name = f"{manga_name.replace(' ', '_')}.mp4"
-        output_path = os.path.join(temp_dir, output_name)
+        out_name = f"{manga_name.replace(' ', '_')}.mp4"
+        out_path = os.path.join(temp_dir, out_name)
+        
+        compressed_path = out_path.replace(".mp4", "_compressed.mp4")
 
-        print("--- [RENDER] Writing video file (this may take a while) ---")
+
+        print("--- [RENDER] Writing MP4 ---")
         final_video.write_videofile(
-            output_path,
+            compressed_path,
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            bitrate="8000k",
-            preset="medium",
-            threads=os.cpu_count() or 2,
+            bitrate="3000k",   # LOWER BITRATE = SMALLER VIDEO
+            threads=2,
+            preset="ultrafast",
         )
 
-        return output_path
+        return compressed_path
 
     finally:
-        # close clips gracefully
         for c in clips_to_close:
             try:
                 c.close()
@@ -177,87 +209,109 @@ def render_video_sync(manga_name: str, audio_url: str, image_urls: List[str], se
                 pass
 
 
-# -------------------------
-# Fast preview render (small, low-bitrate)
-# -------------------------
-def render_preview_sync(manga_name: str, audio_url: str, image_urls: List[str], duration: int, temp_dir: str) -> str:
-    preview_dir = os.path.join(temp_dir, "previews")
-    os.makedirs(preview_dir, exist_ok=True)
-    preview_path = os.path.join(preview_dir, f"{manga_name.replace(' ', '_')}_preview_{int(time.time())}.mp4")
+# ================================================================
+# PREVIEW GENERATOR (robust)
+# ================================================================
+def render_preview_sync(manga_name, audio_url, image_urls, duration, temp_dir):
 
-    print("--- [PREVIEW] Preparing images ---")
-    usable_images = []
-    for i, u in enumerate(image_urls[:5]):
+    preview_out_dir = os.path.join(temp_dir, "preview")
+    os.makedirs(preview_out_dir, exist_ok=True)
+
+    preview_path = os.path.join(
+        preview_out_dir,
+        f"{manga_name.replace(' ', '_')}_preview_{int(time.time())}.mp4"
+    )
+
+    print("--- [PREVIEW] Loading images ---")
+    usable = []
+
+    for i, url in enumerate(image_urls[:5]):
         try:
-            img_path = os.path.join(temp_dir, f"preview_page_{i}.jpg")
-            download_file_sync(u, img_path)
-            usable_images.append(img_path)
+            img_p = os.path.join(temp_dir, f"prev_{i}.jpg")
+            download_file_sync(url, img_p)
+            usable.append(img_p)
         except Exception as e:
-            print(f"   - [PREVIEW] Failed to download image {i}: {e}")
+            print(f"[PREVIEW] img {i} failed: {e}")
 
-    clips = []
-    if usable_images:
-        per_image_dur = max(0.5, float(duration) / len(usable_images))
-        for img in usable_images:
-            clips.append(ImageClip(img).set_duration(per_image_dur).resize(width=480))
+    # ---- Build slideshow ----
+    if usable:
+        per = max(0.5, float(duration) / len(usable))
+        clips = [ImageClip(u).set_duration(per).resize(width=480) for u in usable]
         slideshow = concatenate_videoclips(clips, method="compose")
     else:
-        from moviepy.video.VideoClip import ColorClip, TextClip
-        color = ColorClip(size=(480, 270), color=(20, 20, 20)).set_duration(duration)
-        try:
-            txt = TextClip("Preview not available", fontsize=24, color="white").set_position("center").set_duration(duration)
-            slideshow = CompositeVideoClip([color, txt])
-        except Exception:
-            slideshow = color
+        slideshow = ColorClip(size=(480, 270), color=(15, 15, 15)).set_duration(duration)
 
-    # attach audio snippet if available
-    audio_local = os.path.join(temp_dir, "preview_narration.mp3")
+    # ---- Attach audio safely (no 'with' usage) ----
+    audio_local = os.path.join(temp_dir, "preview_audio.mp3")
+
+    snippet = None
+    audio_clip = None
     try:
         download_file_sync(audio_url, audio_local)
         audio_clip = AudioFileClip(audio_local)
+        if not getattr(audio_clip, "fps", None):
+            audio_clip = audio_clip.set_fps(44100)
+
         snippet = audio_clip.subclip(0, min(duration, audio_clip.duration))
         slideshow = slideshow.set_audio(snippet)
-        audio_clip.close()
-    except Exception as e:
-        print(f"   - [PREVIEW] No audio: {e}")
 
-    # write low-res preview
+    except Exception as e:
+        print(f"[PREVIEW] No audio: {e}")
+
+    # ---- Write video ----
     slideshow.write_videofile(
         preview_path,
         fps=12,
         codec="libx264",
         audio_codec="aac",
-        bitrate="400k",
+        bitrate="500k",
         preset="ultrafast",
         threads=1,
         verbose=False,
-        logger=None
+        logger=None,
     )
+
+    # Cleanup
+    try:
+        slideshow.close()
+        if snippet:
+            snippet.close()
+        if audio_clip:
+            audio_clip.close()
+    except Exception:
+        pass
 
     return preview_path
 
 
-# -------------------------
-# Background full render + upload
-# -------------------------
-def _render_and_upload_full_job(manga_name: str, audio_url: str, image_urls: List[str], segments: List[Dict[str, Any]], temp_dir: str, job_id: str):
+# ================================================================
+# Background: final render + upload
+# ================================================================
+def _render_and_upload_full_job(manga_name, audio_url, image_urls, segments, temp_dir, job_id):
+
     try:
-        print(f"--- [JOB {job_id}] Background final render starting... ---")
-        final_video_path = render_video_sync(manga_name, audio_url, image_urls, segments, temp_dir)
+        print(f"--- [JOB {job_id}] Starting full render ---")
 
-        print(f"--- [JOB {job_id}] Uploading final video to Supabase... ---")
-        firebase_path = f"videos/{os.path.basename(final_video_path)}"
+        final_path = render_video_sync(manga_name, audio_url, image_urls, segments, temp_dir)
 
+        # NEW — Compress before uploading
+        compressed_path = os.path.join(temp_dir, "compressed_final.mp4")
+        final_path = compress_video(final_path, compressed_path, crf=28)
+
+
+        dest = f"videos/{job_id}/{os.path.basename(final_path)}"
+
+
+        # NOTE: this function is synchronous; call it directly in background task.
         try:
-            # read file & upload via supabase_upload (runs in threadpool)
-            uploaded_url = run_in_threadpool(upload_local_file_to_supabase, final_video_path, firebase_path, "video/mp4")
-            print(f"--- [JOB {job_id}] Final video uploaded: {uploaded_url} ---")
+            uploaded_url = upload_local_file_to_supabase(final_path, dest, "video/mp4")
+            print(f"[JOB {job_id}] Final video uploaded: {uploaded_url}")
 
             write_status(job_id, {
                 "status": "completed",
                 "preview_url": None,
                 "video_url": uploaded_url,
-                "message": "Final video ready"
+                "message": "Final video ready."
             })
 
         except Exception as e:
@@ -270,63 +324,76 @@ def _render_and_upload_full_job(manga_name: str, audio_url: str, image_urls: Lis
             })
 
     except Exception as exc:
-        print("\n" + "=" * 70)
-        print(f"   [FATAL ERROR] in background video generation pipeline: {exc}")
-        print("=" * 70)
+        print(f"[JOB {job_id}] ERROR during final render: {exc}")
         traceback.print_exc()
+
         write_status(job_id, {
             "status": "error",
+            "message": str(exc),
             "preview_url": None,
-            "video_url": None,
-            "message": str(exc)
+            "video_url": None
         })
+
     finally:
         try:
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-                print(f"--- [CLEANUP] Removed temporary directory (background job): {temp_dir} ---")
+            shutil.rmtree(temp_dir)
+            print(f"[CLEANUP] Removed temp dir: {temp_dir}")
         except Exception as e:
-            print(f"--- [CLEANUP ERROR] while removing {temp_dir}: {e}")
+            print(f"[CLEANUP ERROR] {e}")
 
 
-# -------------------------
-# API Endpoint
-# -------------------------
+# ================================================================
+# API Endpoints
+# ================================================================
+@router.get("/video_status/{job_id}")
+def get_video_status(job_id: str):
+    path = os.path.join(STATUS_DIR, f"{job_id}.json")
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 @router.post("/generate_video")
-async def generate_video_endpoint(request: VideoGenerationRequest, background_tasks: BackgroundTasks):
-    """
-    1) Create quick preview synchronously
-    2) Upload preview to Supabase
-    3) Write 'processing' status and schedule background final render
-    """
+async def generate_video_endpoint(
+    request: VideoGenerationRequest,
+    background_tasks: BackgroundTasks,
+):
+
     job_id = str(uuid.uuid4())
     temp_dir = os.path.join(tempfile.gettempdir(), f"job_{job_id}")
     os.makedirs(temp_dir, exist_ok=True)
 
     try:
-        print(f"--- [JOB {job_id}] Creating preview (fast clip)... ---")
+        print(f"--- [JOB {job_id}] Creating preview ---")
+
         preview_path = await run_in_threadpool(
             render_preview_sync,
             request.manga_name,
             request.audio_url,
             request.image_urls,
-            5,  # seconds
+            5,
             temp_dir,
         )
 
         preview_dest = f"previews/{job_id}/{os.path.basename(preview_path)}"
-        preview_url = await run_in_threadpool(upload_local_file_to_supabase, preview_path, preview_dest, "video/mp4")
-
-        print(f"--- [JOB {job_id}] Uploaded preview to Supabase: {preview_url} ---")
+        preview_url = await run_in_threadpool(
+            upload_local_file_to_supabase,
+            preview_path,
+            preview_dest,
+            "video/mp4",
+        )
 
         write_status(job_id, {
             "status": "processing",
             "preview_url": preview_url,
             "video_url": None,
-            "message": "Preview ready, final render in background"
+            "message": "Preview ready; final rendering..."
         })
 
-        # schedule background final render
+        # schedule background final render (runs synchronously in background context)
         background_tasks.add_task(
             _render_and_upload_full_job,
             request.manga_name,
@@ -341,25 +408,17 @@ async def generate_video_endpoint(request: VideoGenerationRequest, background_ta
             "status": "processing",
             "preview_url": preview_url,
             "job_id": job_id,
-            "message": "Preview available; final video is rendering in background.",
+            "message": "Preview generated, full video rendering..."
         }
 
-    except Exception as e:
-        print("\n" + "=" * 70)
-        print(f"   [FATAL ERROR] while creating preview for job {job_id}: {e}")
-        print("=" * 70)
+    except Exception as exc:
         traceback.print_exc()
-        try:
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-        except Exception:
-            pass
 
         write_status(job_id, {
             "status": "error",
             "preview_url": None,
             "video_url": None,
-            "message": f"Preview creation failed: {e}"
-        }) 
+            "message": f"Preview failed: {exc}"
+        })
 
-        raise HTTPException(status_code=500, detail=f"Failed to start video generation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to start rendering: {exc}")

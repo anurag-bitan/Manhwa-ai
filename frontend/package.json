@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "dev:backend": "cd ../backend && venv\\Scripts\\activate && uvicorn backend.main:app --reload --port 8000",
+    "dev:backend": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Set-Location -Path ../backend; . .venv\\Scripts\\Activate.ps1; uvicorn backend.main:app --reload --port 8000\"",
     "start": "concurrently \"npm run dev\" \"npm run dev:backend\""
   },
   "dependencies": {
