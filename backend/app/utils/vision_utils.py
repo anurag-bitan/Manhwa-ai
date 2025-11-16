@@ -17,7 +17,7 @@ from typing import Optional
 # https://github.com/UB-Mannheim/tesseract/wiki
 # uncomment the next line and put your path:
 #
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 # ----------------------------------------------------------
 
 

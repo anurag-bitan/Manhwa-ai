@@ -25,25 +25,27 @@ WORKDIR /app
 # ============================
 # 4. Copy requirements first (better caching)
 # ============================
-COPY requirements.txt /app/requirements.txt
+COPY requirements.txt .
 
 # ============================
 # 5. Install Python dependencies
 # ============================
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ============================
 # 6. Copy application code
 # ============================
-COPY . /app
-
+COPY app ./app
+COPY service_account.json /app/service_account.json
+COPY job_status ./job_status
 # ============================
 # 7. Expose default port (Cloud Run uses $PORT)
 # ============================
+ENV PORT=8080
 EXPOSE 8080
 
 # ============================
 # 8. Start FastAPI with Uvicorn
 # Cloud Run will inject PORT (usually 8080)
 # ============================
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

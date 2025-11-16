@@ -14,5 +14,9 @@ openai
 python-multipart
 moviepy==1.0.3
 slowapi
-ratelimit
 anyio
+supabase
+httpx
+pytesseract
+numpy
+poppler-utils

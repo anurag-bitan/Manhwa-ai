@@ -1,0 +1,40 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+    - name: Configure Docker
+      run: gcloud auth configure-docker asia-south1-docker.pkg.dev
+
+    - name: Build and push Docker image
+      run: |
+        cd backend
+        docker build -t asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest .
+        docker push asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy manhwa-backend \
+          --image=asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest \
+          --platform=managed \
+          --region=${{ secrets.GCP_REGION }} \
+          --allow-unauthenticated \
+          --set-env-vars SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+          --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
+          --set-env-vars OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+          --set-env-vars SUPABASE_BUCKET_NAME=${{ secrets.SUPABASE_BUCKET_NAME }} \
+          --port=8080

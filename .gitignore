@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.env
+/backend/.venv
 .venv/
 venv/
 env/
@@ -14,7 +15,7 @@ env/
 .mp3
 # VS Code
 .vscode/
-
+backend/tts_cache/
 # macOS
 .DS_Store
 
