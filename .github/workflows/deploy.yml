@@ -4,37 +4,48 @@ on:
   push:
     branches: ["main"]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+    # -------------------------
+    # 1. Checkout code
+    # -------------------------
     - name: Checkout
       uses: actions/checkout@v3
 
+    # -------------------------
+    # 2. Authenticate to Google Cloud
+    # -------------------------
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v1
       with:
         credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
+    # -------------------------
+    # 3. Configure Docker to use Artifact Registry
+    # -------------------------
     - name: Configure Docker
-      run: gcloud auth configure-docker asia-south1-docker.pkg.dev
+      run: |
+        gcloud auth configure-docker asia-south1-docker.pkg.dev --quiet
 
+    # -------------------------
+    # 4. Build and push Docker image
+    # -------------------------
     - name: Build and push Docker image
       run: |
         cd backend
         docker build -t asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest .
         docker push asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest
 
+    # -------------------------
+    # 5. Deploy to Cloud Run
+    # -------------------------
     - name: Deploy to Cloud Run
       run: |
-        gcloud run deploy manhwa-backend \
-          --image=asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest \
-          --platform=managed \
-          --region=${{ secrets.GCP_REGION }} \
-          --allow-unauthenticated \
-          --set-env-vars SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
-          --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
-          --set-env-vars OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
-          --set-env-vars SUPABASE_BUCKET_NAME=${{ secrets.SUPABASE_BUCKET_NAME }} \
-          --port=8080
+        gcloud run deploy manhwa-backend --image=asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest --platform=managed --region=${{ secrets.GCP_REGION }} --allow-unauthenticated --port=8080 --set-env-vars=SUPABASE_URL=${{ secrets.SUPABASE_URL }} --set-env-vars=SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} --set-env-vars=OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} --set-env-vars=SUPABASE_BUCKET_NAME=${{ secrets.SUPABASE_BUCKET_NAME }}
