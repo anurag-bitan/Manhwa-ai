@@ -42,11 +42,14 @@ COPY app ./app
 # 7. Expose default port (Cloud Run uses $PORT)
 # ============================
 # ENV PORT=8080
-# EXPOSE 8080
+
+EXPOSE 8080
 
 # ============================
 # 8. Start FastAPI with Uvicorn
 
 # ============================
 # Cloud Run will inject the $PORT variable, and uvicorn will read it
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port $PORT"]
+
+
