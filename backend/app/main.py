@@ -44,6 +44,7 @@ app.add_middleware(
         "*.vercel.app",
         # Cloud Run domain
         "https://manhwa-backend-h7g66jyc2q-el.a.run.app",
+        "https:/manhwa-backend-h7g66jyc2q-el.a.run.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
