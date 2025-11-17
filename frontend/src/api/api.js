@@ -37,7 +37,7 @@ function normalizeStoryData(data) {
 
 export const generateAudioStory = async (formData) => {
   const response = await fetchWithRetry(
-    `${API_URL}/api/v1/generate_audio_story`,
+    `${API_URL}/generate_audio_story`,
     {
       method: "POST",
       body: formData,
@@ -55,7 +55,7 @@ export const generateAudioStory = async (formData) => {
 // ---------------------------------------------------------
 
 export const generateVideo = async (storyData) => {
-  const response = await fetchWithRetry(`${API_URL}/api/v1/generate_video`, {
+  const response = await fetchWithRetry(`${API_URL}/generate_video`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(storyData),
@@ -74,7 +74,7 @@ export const getVideoStatus = async (jobId) => {
   if (!jobId) throw new Error("Job ID missing");
 
   const response = await fetchWithRetry(
-    `${API_URL}/api/v1/video_status/${jobId}`,
+    `${API_URL}/video_status/${jobId}`,
     {
       method: "GET",
     }
