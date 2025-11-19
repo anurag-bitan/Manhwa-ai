@@ -18,7 +18,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise EnvironmentError("❌ Missing OPENAI_API_KEY in backend/.env")
 
-
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise EnvironmentError("❌ Missing GOOGLE_API_KEY in backend/.env")
 # -----------------------------
 # SUPABASE
 # -----------------------------

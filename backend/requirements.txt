@@ -5,7 +5,6 @@ fastapi[all]
 uvicorn[standard]
 python-dotenv
 requests
-openai
 opencv-python
 pdf2image
 gtts
@@ -20,3 +19,4 @@ httpx
 pytesseract
 numpy
 poppler-utils
+google-generativeai

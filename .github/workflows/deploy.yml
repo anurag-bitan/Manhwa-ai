@@ -48,4 +48,4 @@ jobs:
     # -------------------------
     - name: Deploy to Cloud Run
       run: |
-         gcloud run deploy manhwa-backend --image=asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest --platform=managed --region=${{ secrets.GCP_REGION }} --allow-unauthenticated --port=8080 --set-env-vars SUPABASE_URL=${{ secrets.SUPABASE_URL }} --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} --set-env-vars OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} --set-env-vars SUPABASE_BUCKET_NAME=${{ secrets.SUPABASE_BUCKET_NAME }}
+         gcloud run deploy manhwa-backend --image=asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/manhwa-repo/manhwa-backend:latest --platform=managed --region=${{ secrets.GCP_REGION }} --allow-unauthenticated --port=8080 --set-env-vars SUPABASE_URL=${{ secrets.SUPABASE_URL }} --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} --set-env-vars GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }} --set-env-vars SUPABASE_BUCKET_NAME=${{ secrets.SUPABASE_BUCKET_NAME }}
