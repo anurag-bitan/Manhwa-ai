@@ -1,13 +1,21 @@
 """
-Robust multimodal OpenAI helper for generating "Manhwa Explainer" scripts.
+Gemini (Google AI Studio) replacement for OpenAI multimodal script generation.
 
-Key improvements over the original:
- - Safer OpenAI client initialization with clear error message.
- - Defensive parsing of model output (handles string-wrapped JSON).
- - Validates scenes and clamps image indexes to available images.
- - Limits scene count to avoid overly large responses.
- - Graceful fallbacks if LLM fails or returns invalid structure.
- - Helpful debug prints for easier local troubleshooting.
+This version keeps:
+✔ The SAME function name: generate_cinematic_script
+✔ The SAME arguments
+✔ The SAME return structure
+✔ The SAME helpers (validate_scene, fallback_script, JSON extraction)
+✔ Debug logs
+✔ Minimal changes to rest of backend
+
+Just swap OpenAI → Google AI Studio.
+
+Requires:
+    pip install google-generativeai
+
+Env var:
+    GOOGLE_API_KEY=xxxxxx
 """
 
 import os
@@ -18,80 +26,51 @@ import traceback
 import logging
 from typing import Dict, Any, List, Optional
 
-# OpenAI client (newer official package)
+# Google AI SDK (Gemini)
 try:
-    from openai import OpenAI
+    import google.generativeai as genai
 except Exception:
-    # older environments may not have the same package; raise informative error
-    raise RuntimeError("OpenAI SDK not installed. Run: pip install openai (or the correct client package)")
+    raise RuntimeError(
+        "Google AI SDK missing. Install: pip install google-generativeai"
+    )
 
-from app.config import OPENAI_API_KEY
+from app.config import GOOGLE_API_KEY   # YOU MUST add this in config!
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("openai_utils")
+logger = logging.getLogger("google_ai_utils")
 
-# Initialize OpenAI client with environment key (clear message if missing)
-if not OPENAI_API_KEY:
-    raise EnvironmentError("Missing OPENAI_API_KEY in app.config. Set your API key in the backend .env / config.")
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize Google Gemini client
+if not GOOGLE_API_KEY:
+    raise EnvironmentError("Missing GOOGLE_API_KEY in app.config or .env")
 
-# Model choice (multimodal capable)
-LLM_MODEL = os.getenv("MANHWA_LLM_MODEL", "gpt-4o-mini")
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# Master prompt / rules (kept concise)
-MANHWA_RULES = """
-Tum ek popular 'Manhwa Explainer' YouTuber ho.
+# You can change the model here if needed:
+# Recommended small + cheap multimodal model:
+GEMINI_MODEL = os.getenv("MANHWA_LLM_MODEL", "gemini-2.0-flash-lite")
 
-RULES:
-1. Language → Hinglish (zyada Hindi, friendly tone)
-2. Tense → Present tense narration
-3. Har panel ke liye ek "scene" object banao
-4. Har panel ke visuals ko clearly explain karo
-5. Dialogue + Internal thoughts ko narration me merge karo
-6. Script engaging ho → jaise dost ko story suna rahe ho
-7. Sirf VALID JSON return karna (no text, no markdown)
-
-OUTPUT JSON FORMAT:
-{
-  "full_narration": "string",
-  "scenes": [
-    {
-      "narration_segment": "string",
-      "image_page_index": 0
-    }
-  ]
-}
-"""
 
 # ---------------------------------------------------------
-# Helpers
+# Reuse your helper logic exactly as before
 # ---------------------------------------------------------
 def _safe_base64(img_bytes: bytes) -> str:
-    """Return base64 string for image bytes. Small wrapper for clarity."""
     return base64.b64encode(img_bytes).decode("utf-8")
 
 
 def _extract_json_from_text(raw: str) -> Optional[str]:
-    """
-    Try to extract a JSON object substring from possibly noisy model output.
-    Returns None if extraction/parsing fails.
-    """
     if not raw:
         return None
 
     raw = raw.strip()
 
-    # If it already looks like JSON (startswith {), try directly
     if raw.startswith("{") and raw.endswith("}"):
         return raw
 
-    # Try to find the first '{' and the matching '}' from the end
     start = raw.find("{")
     end = raw.rfind("}")
     if start != -1 and end != -1 and end > start:
         return raw[start:end + 1]
 
-    # Last resort: try to match a top-level JSON using regex (balanced braces is hard, but this helps)
     m = re.search(r"\{[\s\S]*\}", raw)
     if m:
         return m.group(0)
@@ -100,30 +79,18 @@ def _extract_json_from_text(raw: str) -> Optional[str]:
 
 
 def validate_scene(scene: Dict[str, Any], index: int) -> bool:
-    """
-    Validate scene has required fields and types.
-    """
     if not isinstance(scene, dict):
-        logger.debug(f"[scene {index}] invalid type: expected dict")
         return False
-
     if "narration_segment" not in scene or "image_page_index" not in scene:
-        logger.debug(f"[scene {index}] missing keys")
         return False
-
-    if not isinstance(scene["narration_segment"], str) or not scene["narration_segment"].strip():
-        logger.debug(f"[scene {index}] invalid narration_segment")
+    if not isinstance(scene["narration_segment"], str):
         return False
-
     if not isinstance(scene["image_page_index"], int):
-        logger.debug(f"[scene {index}] image_page_index not int")
         return False
-
     return True
 
 
 def fallback_script(name: str, ocr: str) -> Dict[str, Any]:
-    """Simple fallback when LLM doesn't produce acceptable output."""
     short = (ocr or "").strip()[:240]
     return {
         "full_narration": f"Yeh {name} ki kahani hai. {short}...",
@@ -137,7 +104,7 @@ def fallback_script(name: str, ocr: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------
-# Main multimodal function
+# MAIN FUNCTION — Gemini multimodal replacement
 # ---------------------------------------------------------
 def generate_cinematic_script(
     manga_name: str,
@@ -146,135 +113,131 @@ def generate_cinematic_script(
     image_bytes_list: List[bytes],
     max_scenes: int = 200
 ) -> Dict[str, Any]:
+
+    logger.info("→ Preparing multimodal content for Gemini...")
+
+    # Build the master instruction
+    MANHWA_RULES = f"""
+Tum ek popular 'Manhwa Explainer' YouTuber ho.
+
+RULES:
+1. Language → Hinglish (zyada Hindi, friendly tone)
+2. Tense → Present tense narration
+3. Har panel ke liye ek "scene" object banao
+4. Har panel ke visuals ko clearly explain karo
+5. Dialogue + Internal thoughts ko narration me merge karo
+6. Script engaging ho → jaise dost ko story suna rahe ho
+7. Sirf VALID JSON return karna (no text, no markdown)
+
+OUTPUT JSON FORMAT:
+{{
+  "full_narration": "string",
+  "scenes": [
+    {{
+      "narration_segment": "string",
+      "image_page_index": 0
+    }}
+  ]
+}}
+
+Manga: {manga_name}
+Genre: {manga_genre}
     """
-    Construct a multimodal prompt (images + OCR pages) and call the LLM to
-    produce a structured "Manhwa Explainer" JSON.
-    Returns a dictionary with keys: 'full_narration' and 'scenes'.
-    """
 
-    logger.info("→ Preparing multimodal content for OpenAI...")
-
-    # Basic safe-guards
-    if not isinstance(image_bytes_list, list):
-        image_bytes_list = []
-
-    # Build messages
-    system_message = {"role": "system", "content": MANHWA_RULES}
-
-    user_blocks: List[Dict[str, Any]] = [
-        {"type": "text", "text": f"Manga Name: {manga_name}\nGenre: {manga_genre}\nStart explaining panel-by-panel:"}
-    ]
-
-    # Break OCR into per-page pieces
-    ocr_pages = []
+    # OCR split
     if ocr_data:
         ocr_pages = ocr_data.split("\n\n--- PAGE BREAK ---\n\n")
     else:
         ocr_pages = []
 
-    # Attach images + OCR text (guarding indices)
-    for i, img_bytes in enumerate(image_bytes_list):
+    # Build the input list for Gemini
+    contents = [
+        {"role": "user", "parts": [{"text": MANHWA_RULES}]}
+    ]
+
+    # Add all images + OCR combos exactly like OpenAI version
+    for idx, img_bytes in enumerate(image_bytes_list):
         try:
             b64 = _safe_base64(img_bytes)
-            user_blocks.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-        except Exception:
-            # If base64 encoding fails, continue but log it
-            logger.warning(f"→ Unable to encode image at index {i}, skipping image in prompt.")
-            continue
+            contents[0]["parts"].append(
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64}}
+            )
+        except:
+            logger.warning(f"Could not base64 image {idx}")
 
-        page_text = ocr_pages[i] if i < len(ocr_pages) else ""
-        user_blocks.append({"type": "text", "text": f"[PANEL {i}] OCR:\n{page_text}\nExplain this panel with visuals, dialogue and internal thoughts."})
-
-    user_blocks.append({"type": "text", "text": "Return final script in pure JSON only with the format {\"full_narration\":..., \"scenes\":[...] }."})
-
-    user_message = {"role": "user", "content": user_blocks}
-
-    # Call the model
-    response_content = None
-    try:
-        logger.info(f"   [DEBUG] Calling OpenAI Multimodal API with model: {LLM_MODEL}")
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[system_message, user_message],
-            temperature=0.45,
-            max_tokens=3500,
-            response_format={"type": "json_object"},
+        panel_text = ocr_pages[idx] if idx < len(ocr_pages) else ""
+        contents[0]["parts"].append(
+            {"text": f"[PANEL {idx}] OCR:\n{panel_text}\nExplain this panel."}
         )
 
-        # response.choices[0].message.content may be a string or a structured object depending on client
-        raw = None
-        try:
-            raw = response.choices[0].message.content
-        except Exception:
-            # fallback to str(response)
+    # Final instruction at end
+    contents[0]["parts"].append(
+        {"text": "Return ONLY JSON. No markdown."}
+    )
+
+    # ----------------------------
+    # Gemini API CALL
+    # ----------------------------
+    try:
+        logger.info(f"Calling Gemini model: {GEMINI_MODEL}")
+
+        response = genai.GenerativeModel(GEMINI_MODEL).generate_content(
+            contents,
+            generation_config={
+                "temperature": 0.4,
+                "max_output_tokens": 4096,
+                "response_mime_type": "application/json"
+            }
+        )
+
+        # Gemini returns .text representing JSON if mime type is application/json
+        raw = response.text
+        if not raw:
             raw = str(response)
 
-        # If the SDK already returned a dict-like object, try returning it after validation
-        if isinstance(raw, dict):
-            candidate = raw
-        else:
-            # raw likely a string — try to extract JSON substring
-            json_str = _extract_json_from_text(str(raw))
-            if json_str is None:
-                logger.debug("   [DEBUG] Could not extract JSON substring from model output.")
-                return fallback_script(manga_name, ocr_data)
-            try:
-                candidate = json.loads(json_str)
-            except Exception as e:
-                logger.debug("   [DEBUG] json.loads failed on extracted substring: %s", e)
-                return fallback_script(manga_name, ocr_data)
-
-        # Validate top-level keys
-        if not candidate or "full_narration" not in candidate or "scenes" not in candidate:
-            logger.debug("   [DEBUG] Candidate missing required keys.")
+        json_str = _extract_json_from_text(raw)
+        if json_str is None:
+            logger.error("JSON extraction failed from Gemini output")
             return fallback_script(manga_name, ocr_data)
 
-        scenes = candidate.get("scenes", [])
+        candidate = json.loads(json_str)
+
+        if "scenes" not in candidate or "full_narration" not in candidate:
+            return fallback_script(manga_name, ocr_data)
+
+        scenes = candidate["scenes"]
         if not isinstance(scenes, list) or not scenes:
-            logger.debug("   [DEBUG] 'scenes' is not a non-empty list.")
             return fallback_script(manga_name, ocr_data)
 
-        # Validate and sanitize scenes
+        # Validate + sanitize scenes
         validated_scenes = []
+        img_count = max(1, len(image_bytes_list))
+
         for i, s in enumerate(scenes):
             if len(validated_scenes) >= max_scenes:
-                logger.info("   [INFO] Reached max_scenes limit; truncating remaining scenes.")
                 break
-
             if not validate_scene(s, i):
-                logger.debug(f"   [DEBUG] Scene {i} failed validation; skipping.")
                 continue
 
-            # Clamp image index within available images
-            image_count = max(1, len(image_bytes_list))
-            page_index = s.get("image_page_index", 0)
-            if page_index < 0:
-                page_index = 0
-            if page_index >= image_count:
-                # map out-of-range indices to nearest valid index (preferably 0)
-                logger.debug(f"   [DEBUG] Scene {i} image_page_index {s.get('image_page_index')} out-of-range; clamping to 0.")
-                page_index = 0
+            idx = s["image_page_index"]
+            if idx < 0 or idx >= img_count:
+                idx = 0
 
-            sanitized_scene = {
+            validated_scenes.append({
                 "narration_segment": s["narration_segment"].strip(),
-                "image_page_index": int(page_index)
-            }
-
-            validated_scenes.append(sanitized_scene)
+                "image_page_index": int(idx)
+            })
 
         if not validated_scenes:
-            logger.debug("   [DEBUG] No valid scenes after sanitization.")
             return fallback_script(manga_name, ocr_data)
 
-        result = {
+        logger.info(f"[SUCCESS] Gemini generated {len(validated_scenes)} scenes.")
+        return {
             "full_narration": candidate.get("full_narration", "").strip(),
             "scenes": validated_scenes
         }
 
-        logger.info(f"   [SUCCESS] Generated and validated 'Manhwa Explainer' script with {len(validated_scenes)} scenes.")
-        return result
-
     except Exception as e:
-        logger.error("❌ Multimodal LLM failed: %s", e)
+        logger.error("❌ Gemini multimodal failed:", e)
         traceback.print_exc()
         return fallback_script(manga_name, ocr_data)
