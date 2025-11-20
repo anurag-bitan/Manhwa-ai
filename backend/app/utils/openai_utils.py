@@ -115,6 +115,14 @@ def generate_cinematic_script(
 ) -> Dict[str, Any]:
 
     logger.info("→ Preparing multimodal content for Gemini...")
+    MAX_IMAGES_TO_LLM = 50
+    if len(image_bytes_list) > MAX_IMAGES_TO_LLM:
+        print(f"⚠ Limiting {len(image_bytes_list)} images → {MAX_IMAGES_TO_LLM} for LLM")
+        # Take evenly distributed samples
+        indices = np.linspace(0, len(image_bytes_list)-1, MAX_IMAGES_TO_LLM, dtype=int)
+        image_bytes_list = [image_bytes_list[i] for i in indices]
+    
+    logger.info(f"→ Sending {len(image_bytes_list)} images to Gemini...")
 
     # Build the master instruction
     MANHWA_RULES = f"""

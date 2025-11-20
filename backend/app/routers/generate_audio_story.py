@@ -21,6 +21,7 @@ import tempfile
 import traceback
 import uuid
 import json
+import time
 from typing import List, Tuple
 
 from fastapi import APIRouter, Form, UploadFile, File, HTTPException
@@ -249,7 +250,8 @@ async def generate_audio_story(
     
     # Folder-safe version
     manga_folder = manga_name.replace(" ", "_").replace("/", "_").lower()
-
+    MAX_PROCESSING_TIME = 1000  
+    start_time = time.time()
     try:
         # ------------------------------------------------------
         # STEP 1 — Save PDF temporarily + Store for streaming
@@ -275,6 +277,17 @@ async def generate_audio_story(
 
         if not images:
             raise HTTPException(400, "No images extracted from PDF")
+        
+        if len(images) > 50:
+            raise HTTPException(
+                400, 
+                f"Too many panels extracted ({len(images)}). Please upload a cleaner manga PDF with clear panel borders."
+            )
+            
+        print(f"✔ Extracted {len(images)} panels (validated)")
+        
+        if time.time() - start_time > MAX_PROCESSING_TIME:
+            raise HTTPException(408, "Processing timeout - manga too complex")
 
         image_bytes = pil_images_to_bytes(images)
         print(f"✔ Extracted {len(image_bytes)} images from PDF")
