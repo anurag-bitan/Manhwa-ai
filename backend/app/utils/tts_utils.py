@@ -115,11 +115,11 @@ def generate_narration_audio(text: str) -> tuple[str, float]:
 
     # Cache key
     text_hash = hashlib.md5(clean_text.encode()).hexdigest()
-    if os.path.exists("/tmp"):
-        TTS_CACHE_DIR = "/tmp/tts_cache"
-    else:
-        # Fallback for local development (saves to your project folder)
-        TTS_CACHE_DIR = os.path.join(os.getcwd(), "tts_cache")
+    # if os.path.exists("/tmp"):
+    #     TTS_CACHE_DIR = "/tmp/tts_cache"
+    # else:
+    #     # Fallback for local development (saves to your project folder)
+    #     TTS_CACHE_DIR = os.path.join(os.getcwd(), "tts_cache")
     
     final_path = os.path.join(TTS_CACHE_DIR, f"{text_hash}.mp3")
 
