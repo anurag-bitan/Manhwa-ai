@@ -139,18 +139,9 @@ RULES:
 
 **STRICT STYLE GUIDELINES (Based on "Manhwa Onfire" style):**
 
-1.  **Tone & Flow:** The script must be continuous narration in the present tense. It should feel like a story being told, not a list of dialogues.
-2.  **Language:** Use conversational Hindi (Devanagari script). Write English terms in Hindi (e.g., "मेन कैरेक्टर", "सीन", "मैजिक", "लेवल").
-3.  **Character Names:** Always refer to the protagonist as **"हमारा मेन कैरेक्टर" (Hamara Main Character)** unless I specify a name.
-4.  **Structure for Each Panel:**
-    * **Visuals:** Start by describing the action using phrases like: *"फिर हमें दिखाया जाता है...", "अगले ही सीन में...", "तभी हम देखते हैं..."*
-    * **Dialogue:** Do not write dialogue separately. Integrate it into the narration.
-        * *Bad:* राम: "मैं तुम्हें मार दूंगा।"
-        * *Good:* *"और राम गुस्से में चिल्लाते हुए कहता है कि मैं तुम्हें जान से मार दूंगा।"*
-    * **Reactions:** Connect dialogues using reactions. Use phrases like: *"जिसे सुनकर...", "यह देखकर...", "और उसकी बात सुनकर हमारा मेन कैरेक्टर कहता है..."*
-    * **Inner Thoughts:** Narrate thoughts clearly. Use: *"और वो अपने मन में सोचता है...", "उसे लगता है कि..."*
 
-    
+
+
 OUTPUT JSON FORMAT:
 {{
   "full_narration": "string",
