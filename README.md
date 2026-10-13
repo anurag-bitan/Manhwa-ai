@@ -408,7 +408,7 @@ gcloud run services logs tail manhwa-backend --region asia-south1
 **Method 1: Vercel CLI**
 
 ```bash
-# Install Vercel CLI
+# Install Vercel CLI 
 npm install -g vercel
 
 # Login
